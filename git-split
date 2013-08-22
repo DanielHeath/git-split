@@ -1,0 +1,52 @@
+#!/usr/bin/env ruby
+
+DEBUG = ENV["DEBUG"]
+
+$LOAD_PATH << File.dirname(__FILE__)
+require 'usage' if ARGV.empty?
+
+def run(cmd)
+  puts "Running '#{cmd}'" if DEBUG
+  out = `#{cmd}`
+  raise "Error running #{cmd} (output was #{out})" unless $?.success?
+  return out.strip
+end
+
+branchname = ARGV.shift
+commits = ARGV.map {|e| run("git rev-parse #{e}") }
+
+status = run('git status --porcelain')
+raise status.inspect unless status.length == 0
+
+commits_since_upstream = run("git log --oneline 'origin/master..HEAD' | cut -f 1 -d' ' | xargs -n 1 git rev-parse").split("\n")
+
+puts commits_since_upstream.inspect
+puts commits.inspect
+specified_but_unavailable = commits - commits_since_upstream
+raise "You specified the following unavailable commits: #{specified_but_unavailable}" if (specified_but_unavailable).any?
+
+raise "Branch #{branchname} already exists" if run("git branch -r | grep 'origin/#{branchname}$' | wc -l").to_i > 0
+
+starting_location = run("git rev-parse --abbrev-ref HEAD")
+
+run('git checkout origin/master')
+run("git checkout -b #{branchname}")
+commits.each do |ref|
+  run("git cherry-pick #{ref}")
+end
+
+run("git checkout origin/master")
+run("git checkout -b gitsplit_#{branchname}")
+(commits_since_upstream - commits).each do |ref|
+  run("git cherry-pick #{ref}")
+end
+run("git checkout #{starting_location}")
+run("git reset --hard gitsplit_#{branchname}")
+
+
+puts run("git status")
+puts run("git log origin/master..HEAD")
+puts run("git log origin/master..#{branchname}")
+
+puts "Pushing..."
+run("git push --set-upstream origin #{branchname}:#{branchname}")
